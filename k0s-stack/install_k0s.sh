@@ -127,6 +127,7 @@ install_kubectl() {
 
   # Create kubeconfig directory
   sudo mkdir -p "${KUBECONFIG_DIR}"
+  sudo chown vagrant:vagrant "${KUBECONFIG_DIR}"
 
   # Copy admin kubeconfig for vagrant user
   sudo install \
