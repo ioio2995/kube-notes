@@ -1,0 +1,120 @@
+Vagrant.configure("2") do |config|
+
+  # Required Vagrant plugins
+  REQUIRED_PLUGINS = %w(
+    vagrant-cachier
+  )
+
+  # Check if required plugins are installed
+  REQUIRED_PLUGINS.each do |plugin|
+    unless Vagrant.has_plugin?(plugin)
+      puts "[INFO] Missing plugin: #{plugin}"
+      puts "[INFO] Install with: vagrant plugin install #{plugin}"
+    end
+  end
+
+  # Enable package cache acceleration if plugin is available
+  if Vagrant.has_plugin?("vagrant-cachier")
+    config.cache.auto_detect = true
+  end
+
+  # Enable or disable k0s installation
+  # Default value: yes
+  INSTALL_K0S = ENV.fetch("INSTALL_K0S", "yes")
+
+  # Base box used by all virtual machines
+  config.vm.box = "generic/debian12"
+
+
+  # Common provisioning script executed on all nodes
+  common = <<-SHELL
+    sudo apt update -qq >/dev/null 2>&1
+
+    sudo apt install -y -qq \
+      unzip \
+      iftop \
+      curl \
+      software-properties-common \
+      git \
+      vim \
+      tree \
+      net-tools \
+      telnet \
+      >/dev/null 2>&1
+  SHELL
+
+  # Cluster nodes definition
+  NODES = [
+    {
+      hostname: "k0s1",
+      ip: "192.168.144.10",
+      cpus: 4,
+      mem: 4096,
+      type: "k0s"
+    }
+  ]
+
+  # Build /etc/hosts entries for all nodes
+  etc_hosts = ""
+
+  NODES.each do |node|
+    etc_hosts += <<-SHELL
+echo "#{node[:ip]} #{node[:hostname]}" >> /etc/hosts
+    SHELL
+  end
+
+  # Create and configure each virtual machine
+  NODES.each do |node|
+
+    config.vm.define node[:hostname] do |cfg|
+
+      # Set VM hostname
+      cfg.vm.hostname = node[:hostname]
+
+      # Default private network configuration
+      # Used mainly by VirtualBox
+      cfg.vm.network "private_network", ip: node[:ip]
+
+      # VirtualBox specific configuration
+      cfg.vm.provider "virtualbox" do |v|
+
+        # VM resources
+        v.name   = node[:hostname]
+        v.cpus   = node[:cpus]
+        v.memory = node[:mem]
+
+        # VirtualBox low-level tuning
+        v.customize [ "modifyvm", :id, "--natdnshostresolver1", "on" ]
+        v.customize [ "modifyvm", :id, "--natdnsproxy1", "on" ]
+        v.customize [ "modifyvm", :id, "--ioapic", "on" ]
+        v.customize [ "modifyvm", :id, "--nictype1", "virtio" ]
+
+      end
+
+      # Hyper-V specific configuration
+      cfg.vm.provider "hyperv" do |h|
+
+        # VM resources
+        h.vmname = node[:hostname]
+        h.cpus   = node[:cpus]
+        h.memory = node[:mem]
+        h.maxmemory = node[:mem]
+      end
+
+      # Base provisioning
+      cfg.vm.provision :shell, path: "install_base.sh"
+
+      # Populate /etc/hosts with cluster entries
+      cfg.vm.provision :shell, inline: etc_hosts
+
+      # Install common packages and utilities
+      cfg.vm.provision :shell, inline: common
+
+      # Optional k0s installation
+      if node[:type] == "k0s" && INSTALL_K0S == "yes"
+        cfg.vm.provision :shell, path: "install_k0s.sh"
+      end
+
+    end
+  end
+end
